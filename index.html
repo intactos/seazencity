@@ -1,43 +1,66 @@
 <!DOCTYPE html>
 <html lang="ru">
 <head>
-  <meta charset="UTF-8">
+  <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
+
   <title>Seazencity Lamp</title>
 
-  <link rel="manifest" href="manifest.webmanifest">
+  <!-- ОБЯЗАТЕЛЬНО: путь абсолютный, с /seazencity/ -->
+  <link rel="manifest" href="/seazencity/manifest.webmanifest">
+
   <meta name="theme-color" content="#000000">
+  <meta name="background-color" content="#000000">
 
   <style>
-    html, body {
+    body {
       margin: 0;
-      padding: 0;
-      background: #000;
-      color: #fff;
-      height: 100%;
+      height: 100vh;
+      background: black;
+      color: white;
+      font-family: system-ui, sans-serif;
       display: flex;
       align-items: center;
       justify-content: center;
-      font-family: system-ui, sans-serif;
-    }
-    .center {
       text-align: center;
-      font-size: 22px;
+    }
+    h1 {
+      font-size: 28px;
+      margin-bottom: 20px;
+    }
+    p {
+      font-size: 16px;
+      opacity: 0.85;
     }
   </style>
 </head>
 <body>
-  <div class="center">
-    <div>PWA работает</div>
-    <div style="font-size:14px;opacity:.6;margin-top:8px;">
-      Если это установилось как приложение — всё ок
-    </div>
-  </div>
 
-  <script>
-    if ("serviceWorker" in navigator) {
-      navigator.serviceWorker.register("./sw.js");
-    }
-  </script>
+<div>
+  <h1>✅ PWA ДОЛЖНО УСТАНАВЛИВАТЬСЯ</h1>
+
+  <p>
+    Открой меню браузера (⋮)<br>
+    и нажми <b>Install app</b><br>
+    или <b>Добавить на главный экран</b>
+  </p>
+
+  <p style="margin-top:20px">
+    Если приложение уже установлено – всё работает правильно.
+  </p>
+</div>
+
+<script>
+  // БЕЗ ЭТОГО КНОПКИ INSTALL НЕ БУДЕТ
+  if ("serviceWorker" in navigator) {
+    navigator.serviceWorker.register(
+      "/seazencity/sw.js",
+      { scope: "/seazencity/" }
+    ).then(() => {
+      console.log("Service worker registered");
+    });
+  }
+</script>
+
 </body>
 </html>
