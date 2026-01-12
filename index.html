@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
-  <title>WLED PWA Test (errors visible)</title>
+  <title>Seazencity Lamp</title>
 
   <link rel="manifest" href="./manifest.webmanifest">
   <meta name="theme-color" content="#0b0b0f">
@@ -12,251 +12,522 @@
   <style>
     :root { color-scheme: dark; }
     body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial, sans-serif; background:#0b0b0f; color:#eaeaf2; }
-    .wrap { max-width: 720px; margin: 0 auto; padding: 18px 14px 40px; }
-    h1 { margin: 10px 0 6px; font-size: 22px; }
-    .sub { opacity:.7; font-size: 13px; line-height: 1.35; }
+    .wrap { max-width: 760px; margin: 0 auto; padding: 18px 14px 44px; }
+    h1 { margin: 8px 0 6px; font-size: 22px; }
+    .sub { opacity:.75; font-size: 13px; line-height: 1.35; }
     .card { margin-top: 14px; background: rgba(255,255,255,.06); border: 1px solid rgba(255,255,255,.10); border-radius: 16px; padding: 14px; }
-    .row { display:flex; gap:10px; flex-wrap: wrap; align-items: center; }
-    input { width: 100%; box-sizing: border-box; padding: 12px 12px; border-radius: 12px; border:1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.35); color:#fff; font-size: 16px; }
+    .row { display:flex; gap:10px; flex-wrap: wrap; align-items:center; }
+    .pill { display:inline-flex; padding: 8px 10px; border-radius: 999px; border:1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.25); font-size: 13px; opacity:.95; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
     button { padding: 12px 12px; border-radius: 14px; border:1px solid rgba(255,255,255,.16); background: rgba(255,255,255,.08); color:#fff; font-size: 15px; cursor:pointer; }
     button:active { transform: translateY(1px); }
-    .pill { display:inline-flex; padding: 8px 10px; border-radius: 999px; border:1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.25); font-size: 13px; opacity:.9; }
+    button.primary { background: rgba(120,160,255,.18); border-color: rgba(120,160,255,.40); }
+    button.danger { background: rgba(255,90,90,.16); border-color: rgba(255,90,90,.40); }
+    input { width: 100%; box-sizing: border-box; padding: 12px 12px; border-radius: 12px; border:1px solid rgba(255,255,255,.14); background: rgba(0,0,0,.35); color:#fff; font-size: 16px; }
+    .sep { height:1px; background: rgba(255,255,255,.10); margin: 12px 0; }
     .ok { color: #8ff0a4; }
     .bad { color: #ff7b72; }
-    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace; font-size: 12px; white-space: pre-wrap; word-break: break-word; }
-    .big { font-size: 16px; line-height:1.35; }
-    .hint { opacity:.75; font-size: 12px; line-height: 1.35; margin-top: 10px; }
-    .sep { height:1px; background: rgba(255,255,255,.10); margin: 12px 0; }
+    .big { font-size: 16px; line-height: 1.35; }
     .grid2 { display:grid; grid-template-columns: 1fr 1fr; gap: 10px; }
     @media (max-width: 560px) { .grid2 { grid-template-columns: 1fr; } }
   </style>
 </head>
+
 <body>
   <div class="wrap">
-    <h1>WLED PWA Test</h1>
+    <h1>Seazencity Lamp</h1>
     <div class="sub">
-      Цель: чтобы на экране было видно, почему запросы к WLED не проходят.<br>
-      Этот тест показывает: URL, попытку запроса, результат, и детальный текст ошибки.
+      Мастер настройки: AP - ввод Wi-Fi в WLED - переход в STA - управление.
     </div>
 
     <div class="card">
       <div class="row">
-        <span class="pill">Origin: <span id="origin" class="mono" style="margin-left:6px"></span></span>
-        <span class="pill">Protocol: <span id="proto" class="mono" style="margin-left:6px"></span></span>
-        <span class="pill">SW: <span id="sw" class="mono" style="margin-left:6px"></span></span>
+        <span class="pill">Stage: <span id="stage" class="mono" style="margin-left:6px">-</span></span>
+        <span class="pill">Origin: <span id="origin" class="mono" style="margin-left:6px">-</span></span>
+        <span class="pill">SW: <span id="sw" class="mono" style="margin-left:6px">-</span></span>
       </div>
-
       <div class="sep"></div>
-
-      <div class="big">
-        1) Введи IP WLED (пример: <span class="mono">10.183.228.118</span>)<br>
-        2) Нажми <b>GET /json/info</b><br>
-        3) Смотри блок <b>RESULT</b> - там будет точная ошибка
-      </div>
-
-      <div style="margin-top:10px">
-        <label class="sub">WLED host (IP или имя без http://)</label>
-        <input id="host" placeholder="10.183.228.118" value="10.183.228.118" />
-      </div>
-
-      <div class="grid2" style="margin-top:10px">
-        <button id="btnInfo">GET /json/info</button>
-        <button id="btnState">POST /json/state (toggle on/off)</button>
-      </div>
-
-      <div class="hint">
-        Важно: если Origin = https://… (GitHub Pages), а WLED = http://…, браузер часто блокирует это как mixed content.
-        Тогда в RESULT ты увидишь ошибку типа <span class="mono">TypeError: Failed to fetch</span> и диагноз ниже.
-      </div>
+      <div id="screen"></div>
     </div>
 
     <div class="card">
       <div class="row">
-        <span class="pill">RESULT: <span id="resBadge" class="mono" style="margin-left:6px">idle</span></span>
+        <span class="pill">Status: <span id="statusBadge" class="mono" style="margin-left:6px">idle</span></span>
         <span class="pill">Last URL: <span id="lastUrl" class="mono" style="margin-left:6px">-</span></span>
       </div>
-
       <div class="sep"></div>
-
-      <div class="sub">Human diagnosis</div>
-      <div id="diagnosis" class="big" style="margin-top:6px; opacity:.95">-</div>
-
+      <div class="sub">Message</div>
+      <div id="msg" class="big" style="margin-top:6px">-</div>
       <div class="sep"></div>
-
-      <div class="sub">Raw details</div>
+      <div class="sub">Raw</div>
       <div id="raw" class="mono" style="margin-top:6px">-</div>
     </div>
 
     <div class="card">
-      <div class="big"><b>Проверка кэша (без отключения интернета)</b></div>
-      <div class="sub" style="margin-top:6px">
-        Нажми кнопку - она попросит Service Worker отдать файл из кэша (если кэширование включено и файл уже был закэширован).
-        Это тест логики, а не “настоящий оффлайн”.
+      <div class="row">
+        <button id="btnReset" class="danger">Сбросить мастер</button>
       </div>
-      <div class="grid2" style="margin-top:10px">
-        <button id="btnCacheSelf">Cache-test: fetch ./cache-test.txt</button>
-        <button id="btnForceUpdate">Force update SW + reload</button>
+      <div class="sub" style="margin-top:10px">
+        Сброс стирает сохранённый host и возвращает на шаг AP.
       </div>
-      <div class="sep"></div>
-      <div class="sub">Cache-test output</div>
-      <div id="cacheOut" class="mono" style="margin-top:6px">-</div>
     </div>
   </div>
 
 <script>
-  const el = (id) => document.getElementById(id);
+/* =========================
+   Константы проекта
+   ========================= */
+const AP_SSID = "seazencity";
+const AP_IP = "4.3.2.1";
+const STA_MDNS = "seazencity.local";
 
-  function setBadge(text, ok=null) {
-    el("resBadge").textContent = text;
-    el("resBadge").className = "mono " + (ok === true ? "ok" : ok === false ? "bad" : "");
-  }
+const LS = {
+  stage: "seazencity_stage",
+  staHost: "seazencity_sta_host"
+};
 
-  function setRaw(obj) {
-    el("raw").textContent = typeof obj === "string" ? obj : JSON.stringify(obj, null, 2);
-  }
+// стадии мастера (только вперёд)
+const STAGE = {
+  AP: "ap",
+  OPEN_WLED: "open_wled",
+  WAIT_STA: "wait_sta",
+  CONTROL: "control"
+};
 
-  function setDiag(text, ok=null) {
-    el("diagnosis").textContent = text;
-    el("diagnosis").className = "big " + (ok === true ? "ok" : ok === false ? "bad" : "");
-  }
+/* =========================
+   DOM helper
+   ========================= */
+const el = (id) => document.getElementById(id);
 
-  function hostToBase(host) {
-    host = (host || "").trim();
-    host = host.replace(/^https?:\/\//i, "");
-    host = host.replace(/\/+$/,"");
-    return "http://" + host; // WLED обычно http. Это важно для диагностики.
-  }
+function setBadge(text, ok=null) {
+  el("statusBadge").textContent = text;
+  el("statusBadge").className = "mono " + (ok === true ? "ok" : ok === false ? "bad" : "");
+}
 
-  function looksLikeMixedContent() {
-    // Если origin https, а цель http - это типовая причина.
-    return location.protocol === "https:";
-  }
+function setLastUrl(url) {
+  el("lastUrl").textContent = url || "-";
+}
 
-  function mixedContentDiagnosis(url) {
-    if (!looksLikeMixedContent()) return null;
-    if (url.startsWith("http://")) {
-      return "Похоже на блокировку mixed content: страница открыта по HTTPS, а запрос идёт на HTTP (локальный IP). Браузер может блокировать такие fetch-запросы. Это объясняет, почему Termux (curl) работает, а PWA нет.";
+function setMsg(text, ok=null) {
+  el("msg").textContent = text || "-";
+  el("msg").className = "big " + (ok === true ? "ok" : ok === false ? "bad" : "");
+}
+
+function setRaw(obj) {
+  el("raw").textContent = (typeof obj === "string") ? obj : JSON.stringify(obj, null, 2);
+}
+
+function setStageLabel(stage) {
+  el("stage").textContent = stage;
+}
+
+function saveStage(stage) {
+  localStorage.setItem(LS.stage, stage);
+  setStageLabel(stage);
+}
+
+function loadStage() {
+  return localStorage.getItem(LS.stage) || STAGE.AP;
+}
+
+function saveStaHost(host) {
+  localStorage.setItem(LS.staHost, host);
+}
+
+function loadStaHost() {
+  return localStorage.getItem(LS.staHost) || STA_MDNS;
+}
+
+function resetAll() {
+  localStorage.removeItem(LS.stage);
+  localStorage.removeItem(LS.staHost);
+  location.reload();
+}
+
+/* =========================
+   Fetch utilities
+   ========================= */
+function withTimeout(ms) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), ms);
+  return { ctrl, done: () => clearTimeout(t) };
+}
+
+async function httpGetJson(url, timeoutMs=2500) {
+  setLastUrl(url);
+  setBadge("GET…", null);
+  setMsg("Запрос…", null);
+
+  const { ctrl, done } = withTimeout(timeoutMs);
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, { method: "GET", signal: ctrl.signal, cache: "no-store" });
+    const dt = Date.now() - t0;
+    const txt = await res.text();
+
+    let json = null;
+    try { json = JSON.parse(txt); } catch { /* ignore */ }
+
+    const out = { ok: res.ok, status: res.status, ms: dt, body: json ?? txt };
+    setBadge(`HTTP ${res.status} (${dt}ms)`, res.ok);
+    setRaw(out);
+
+    if (!res.ok) {
+      setMsg(`Ответ получен, но статус не OK: HTTP ${res.status}`, false);
+      return { ok:false, why:`HTTP ${res.status}`, out };
     }
-    return null;
-  }
-
-  async function doFetch(url, opts) {
-    el("lastUrl").textContent = url;
-    setBadge("requesting…", null);
-    setDiag("Запрос отправлен, ждём ответ…", null);
-    setRaw({ url, opts });
-
-    const t0 = Date.now();
-    try {
-      const res = await fetch(url, opts);
-
-      const dt = Date.now() - t0;
-      const ct = res.headers.get("content-type") || "";
-      const text = await res.text();
-
-      setBadge(`HTTP ${res.status} (${dt}ms)`, res.ok);
-      let diag = res.ok ? "Ответ получен. Если UI не менялся раньше - значит проблема была в блокировке/ошибке запроса." : "Сервер ответил, но статус не OK. Смотри Raw details.";
-      setDiag(diag, res.ok);
-
-      // Пытаемся красиво показать JSON, если это JSON
-      if (ct.includes("application/json") || text.trim().startsWith("{") || text.trim().startsWith("[")) {
-        try {
-          const j = JSON.parse(text);
-          setRaw({ status: res.status, ok: res.ok, headers: Object.fromEntries(res.headers.entries()), json: j });
-        } catch {
-          setRaw({ status: res.status, ok: res.ok, headers: Object.fromEntries(res.headers.entries()), body: text.slice(0, 4000) });
-        }
-      } else {
-        setRaw({ status: res.status, ok: res.ok, headers: Object.fromEntries(res.headers.entries()), body: text.slice(0, 4000) });
-      }
-      return;
-    } catch (err) {
-      const dt = Date.now() - t0;
-      setBadge(`ERROR (${dt}ms)`, false);
-
-      // Главная польза: показываем человеку, что именно сказал браузер.
-      const raw = {
-        name: err?.name,
-        message: err?.message,
-        stack: err?.stack,
-        hint: "Если это TypeError: Failed to fetch - причин несколько, но для HTTPS-PWA -> HTTP-IP самая частая: mixed content."
-      };
-      setRaw(raw);
-
-      const mc = mixedContentDiagnosis(url);
-      if (mc) {
-        setDiag(mc, false);
-      } else {
-        setDiag("Fetch упал. Смотри Raw details (name/message).", false);
-      }
+    if (!json) {
+      setMsg("HTTP OK, но ответ не JSON. Это не похоже на WLED JSON.", false);
+      return { ok:false, why:"not_json", out };
     }
-  }
 
+    setMsg("OK", true);
+    return { ok:true, json, out };
+  } catch (e) {
+    const dt = Date.now() - t0;
+    const out = { ok:false, ms: dt, error: { name: e?.name, message: e?.message, stack: e?.stack } };
+    setBadge(`ERROR (${dt}ms)`, false);
+    setRaw(out);
+    setMsg(`Ошибка запроса: ${e?.name || "Error"} - ${e?.message || "failed"}`, false);
+    return { ok:false, why:`${e?.name || "Error"}`, out };
+  } finally {
+    done();
+  }
+}
+
+async function httpPostJson(url, bodyObj, timeoutMs=2500) {
+  setLastUrl(url);
+  setBadge("POST…", null);
+  setMsg("Запрос…", null);
+
+  const { ctrl, done } = withTimeout(timeoutMs);
+  const t0 = Date.now();
+  try {
+    const res = await fetch(url, {
+      method: "POST",
+      signal: ctrl.signal,
+      cache: "no-store",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyObj)
+    });
+    const dt = Date.now() - t0;
+    const txt = await res.text();
+
+    let json = null;
+    try { json = JSON.parse(txt); } catch { /* ignore */ }
+
+    const out = { ok: res.ok, status: res.status, ms: dt, body: json ?? txt, sent: bodyObj };
+    setBadge(`HTTP ${res.status} (${dt}ms)`, res.ok);
+    setRaw(out);
+
+    if (!res.ok) {
+      setMsg(`Ответ получен, но статус не OK: HTTP ${res.status}`, false);
+      return { ok:false, why:`HTTP ${res.status}`, out };
+    }
+    setMsg("OK", true);
+    return { ok:true, json, out };
+  } catch (e) {
+    const dt = Date.now() - t0;
+    const out = { ok:false, ms: dt, error: { name: e?.name, message: e?.message, stack: e?.stack }, sent: bodyObj };
+    setBadge(`ERROR (${dt}ms)`, false);
+    setRaw(out);
+    setMsg(`Ошибка запроса: ${e?.name || "Error"} - ${e?.message || "failed"}`, false);
+    return { ok:false, why:`${e?.name || "Error"}`, out };
+  } finally {
+    done();
+  }
+}
+
+/* =========================
+   Screens
+   ========================= */
+function renderAP() {
+  saveStage(STAGE.AP);
+  const html = `
+    <div class="big"><b>Шаг 1 - Подключись к лампе (AP)</b></div>
+    <div class="sub" style="margin-top:6px">
+      Подключись к Wi-Fi сети лампы: <span class="mono">${AP_SSID}</span> (пароль пустой).
+      Затем нажми "Проверить".
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <button id="btnApCheck" class="primary">Проверить лампу (AP)</button>
+      <button id="btnGoWled">Открыть WLED (AP)</button>
+    </div>
+
+    <div class="sub" style="margin-top:10px">
+      Проверка идёт на <span class="mono">http://${AP_IP}/json/info</span>.
+      Открыть WLED - это переход на <span class="mono">http://${AP_IP}</span>.
+    </div>
+  `;
+  el("screen").innerHTML = html;
+
+  el("btnApCheck").onclick = async () => {
+    const r = await httpGetJson(`http://${AP_IP}/json/info`, 2500);
+    if (r.ok) {
+      setMsg("Лампа найдена в AP. Переходим к шагу настройки Wi-Fi.", true);
+      renderOpenWled();
+    } else {
+      setMsg("Лампа не найдена в AP. Проверь, что телефон подключён к Wi-Fi лампы.", false);
+    }
+  };
+
+  el("btnGoWled").onclick = () => {
+    // этот переход делает WLED видимым, но это официально необходимый шаг для ввода Wi-Fi
+    saveStage(STAGE.OPEN_WLED);
+    window.location.href = `http://${AP_IP}`;
+  };
+}
+
+function renderOpenWled() {
+  saveStage(STAGE.OPEN_WLED);
+
+  const html = `
+    <div class="big"><b>Шаг 2 - Введи Wi-Fi данные в WLED</b></div>
+    <div class="sub" style="margin-top:6px">
+      Сейчас откроется страница лампы <span class="mono">http://${AP_IP}</span>.
+      Там сделай: Config - WiFi Setup - введи SSID и пароль твоей Wi-Fi сети - Save and Connect.
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <button id="btnOpenAp" class="primary">Открыть http://${AP_IP}</button>
+      <button id="btnNextWait">Я уже сохранил, дальше</button>
+    </div>
+
+    <div class="sub" style="margin-top:10px">
+      После Save and Connect AP сеть лампы пропадёт. Это нормально.
+      Затем подключись телефоном к домашней Wi-Fi сети.
+    </div>
+  `;
+  el("screen").innerHTML = html;
+
+  el("btnOpenAp").onclick = () => {
+    saveStage(STAGE.OPEN_WLED);
+    window.location.href = `http://${AP_IP}`;
+  };
+
+  el("btnNextWait").onclick = () => {
+    renderWaitSta();
+  };
+}
+
+let pollTimer = null;
+
+function stopPoll() {
+  if (pollTimer) {
+    clearInterval(pollTimer);
+    pollTimer = null;
+  }
+}
+
+async function tryStaOnce(host) {
+  return await httpGetJson(`http://${host}/json/info`, 2500);
+}
+
+function renderWaitSta() {
+  saveStage(STAGE.WAIT_STA);
+
+  stopPoll();
+
+  const host = loadStaHost();
+  const html = `
+    <div class="big"><b>Шаг 3 - Подключаемся к лампе в Wi-Fi</b></div>
+    <div class="sub" style="margin-top:6px">
+      Подключи телефон к домашней Wi-Fi сети. Затем нажми "Проверить".
+      По умолчанию используется mDNS имя <span class="mono">${STA_MDNS}</span>.
+    </div>
+
+    <div style="margin-top:10px">
+      <label class="sub">Host лампы (mDNS или IP)</label>
+      <input id="staHost" value="${host}" placeholder="${STA_MDNS}" />
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <button id="btnStaCheck" class="primary">Проверить (STA)</button>
+      <button id="btnStaAuto">Автопоиск (каждые 2 сек)</button>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      <button id="btnGoLampUi">Открыть UI лампы</button>
+      <button id="btnToControl">В управление (если уже доступно)</button>
+    </div>
+
+    <div class="sub" style="margin-top:10px">
+      Открыть UI - это переход на <span class="mono">http://HOST/</span>.
+      Управление включится только после успешного <span class="mono">/json/info</span>.
+    </div>
+  `;
+  el("screen").innerHTML = html;
+
+  const hostEl = el("staHost");
+
+  el("btnStaCheck").onclick = async () => {
+    stopPoll();
+    const h = (hostEl.value || "").trim();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    saveStaHost(h);
+    const r = await tryStaOnce(h);
+    if (r.ok) {
+      setMsg("Лампа доступна в Wi-Fi. Переходим в управление.", true);
+      renderControl();
+    } else {
+      setMsg("Пока не доступно. Проверь, что телефон в правильной Wi-Fi сети, и подожди 10-30 секунд после сохранения.", false);
+    }
+  };
+
+  el("btnStaAuto").onclick = () => {
+    stopPoll();
+    const h = (hostEl.value || "").trim();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    saveStaHost(h);
+
+    setMsg("Автопоиск запущен. Как только /json/info ответит, откроется управление.", null);
+
+    pollTimer = setInterval(async () => {
+      const rr = await tryStaOnce(h);
+      if (rr.ok) {
+        stopPoll();
+        setMsg("Лампа доступна. Переходим в управление.", true);
+        renderControl();
+      }
+    }, 2000);
+  };
+
+  el("btnGoLampUi").onclick = () => {
+    const h = (hostEl.value || "").trim();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    saveStaHost(h);
+    window.location.href = `http://${h}/`;
+  };
+
+  el("btnToControl").onclick = async () => {
+    stopPoll();
+    const h = (hostEl.value || "").trim();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    saveStaHost(h);
+
+    const r = await tryStaOnce(h);
+    if (r.ok) renderControl();
+    else setMsg("Управление не включено, потому что лампа ещё не отвечает на /json/info.", false);
+  };
+}
+
+function renderControl() {
+  saveStage(STAGE.CONTROL);
+  stopPoll();
+
+  const host = loadStaHost();
+
+  const html = `
+    <div class="big"><b>Управление</b></div>
+    <div class="sub" style="margin-top:6px">
+      Host: <span class="mono">${host}</span>
+    </div>
+
+    <div style="margin-top:10px">
+      <label class="sub">Host лампы</label>
+      <input id="ctrlHost" value="${host}" />
+    </div>
+
+    <div class="grid2" style="margin-top:12px">
+      <button id="btnInfo" class="primary">GET /json/info</button>
+      <button id="btnToggle">POST /json/state (toggle)</button>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      <button id="btnBriLow">bri 64</button>
+      <button id="btnBriHigh">bri 255</button>
+    </div>
+
+    <div class="grid2" style="margin-top:10px">
+      <button id="btnPreset1">Preset 1</button>
+      <button id="btnPreset2">Preset 2</button>
+    </div>
+  `;
+
+  el("screen").innerHTML = html;
+
+  const hostEl = el("ctrlHost");
   let toggle = false;
 
-  el("btnInfo").addEventListener("click", async () => {
-    const base = hostToBase(el("host").value);
-    await doFetch(base + "/json/info", { method: "GET", cache: "no-store" });
-  });
+  function hostNow() {
+    const h = (hostEl.value || "").trim();
+    saveStaHost(h);
+    return h;
+  }
 
-  el("btnState").addEventListener("click", async () => {
-    const base = hostToBase(el("host").value);
+  el("btnInfo").onclick = async () => {
+    const h = hostNow();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    await httpGetJson(`http://${h}/json/info`, 2500);
+  };
+
+  el("btnToggle").onclick = async () => {
+    const h = hostNow();
+    if (!h) { setMsg("Host пустой.", false); return; }
     toggle = !toggle;
-    const body = JSON.stringify({ on: toggle });
-    await doFetch(base + "/json/state", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body,
-      cache: "no-store"
-    });
-  });
+    await httpPostJson(`http://${h}/json/state`, { on: toggle }, 2500);
+  };
 
-  // Cache-test file
-  el("btnCacheSelf").addEventListener("click", async () => {
-    try {
-      const res = await fetch("./cache-test.txt", { cache: "default" });
-      const text = await res.text();
-      el("cacheOut").textContent = `status=${res.status} ok=${res.ok}\n` + text;
-    } catch (e) {
-      el("cacheOut").textContent = `ERROR: ${e?.name} ${e?.message}`;
-    }
-  });
+  el("btnBriLow").onclick = async () => {
+    const h = hostNow();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    await httpPostJson(`http://${h}/json/state`, { bri: 64 }, 2500);
+  };
 
-  el("btnForceUpdate").addEventListener("click", async () => {
-    try {
-      if ("serviceWorker" in navigator) {
-        const reg = await navigator.serviceWorker.getRegistration();
-        if (reg) {
-          await reg.update();
-        }
-      }
-      location.reload();
-    } catch (e) {
-      alert(`Force update error: ${e?.name} ${e?.message}`);
-    }
-  });
+  el("btnBriHigh").onclick = async () => {
+    const h = hostNow();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    await httpPostJson(`http://${h}/json/state`, { bri: 255 }, 2500);
+  };
 
-  // top status pills
-  el("origin").textContent = location.origin;
-  el("proto").textContent = location.protocol;
+  el("btnPreset1").onclick = async () => {
+    const h = hostNow();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    await httpPostJson(`http://${h}/json/state`, { ps: 1 }, 2500);
+  };
 
-  (async () => {
-    if (!("serviceWorker" in navigator)) {
-      el("sw").textContent = "unsupported";
-      return;
-    }
-    try {
-      const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-      const state = reg.active ? "active" : (reg.installing ? "installing" : "registered");
-      el("sw").textContent = state;
-    } catch (e) {
-      el("sw").textContent = "register failed";
-      // Покажем это тоже
-      setBadge("SW register ERROR", false);
-      setDiag("Service Worker не зарегистрировался. Смотри Raw details.", false);
-      setRaw({ swRegisterError: { name: e?.name, message: e?.message, stack: e?.stack } });
-    }
-  })();
+  el("btnPreset2").onclick = async () => {
+    const h = hostNow();
+    if (!h) { setMsg("Host пустой.", false); return; }
+    await httpPostJson(`http://${h}/json/state`, { ps: 2 }, 2500);
+  };
+}
+
+/* =========================
+   Boot
+   ========================= */
+el("origin").textContent = location.origin;
+
+el("btnReset").onclick = () => resetAll();
+
+(async () => {
+  if (!("serviceWorker" in navigator)) {
+    el("sw").textContent = "unsupported";
+    return;
+  }
+  try {
+    const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+    el("sw").textContent = reg.active ? "active" : "registered";
+  } catch (e) {
+    el("sw").textContent = "register failed";
+    setBadge("SW ERROR", false);
+    setMsg("Service Worker не зарегистрировался.", false);
+    setRaw({ sw: { name: e?.name, message: e?.message, stack: e?.stack } });
+  }
+})();
+
+// восстановление стадии после возвращения в PWA
+const stage = loadStage();
+setStageLabel(stage);
+
+// логика "только вперёд":
+// - если пользователь ушёл на 4.3.2.1 и вернулся, stage будет OPEN_WLED
+// - мы продолжаем с WAIT_STA, потому что Wi-Fi уже мог быть сохранён
+if (stage === STAGE.AP) renderAP();
+else if (stage === STAGE.OPEN_WLED) renderWaitSta();
+else if (stage === STAGE.WAIT_STA) renderWaitSta();
+else renderControl();
 </script>
 </body>
 </html>
