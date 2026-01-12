@@ -1,198 +1,356 @@
-const UI_VERSION = "2026-01-12-a";
-const $ = (id) => document.getElementById(id);
+// Seazencity PWA controller for WLED (default UI)
+// Принятая архитектура (AP -> WiFi Setup -> STA via mDNS -> fallback via AP reading STA IP)
+//
+// WiFi Setup URL: /settings/wifi (из sitemap WLED Web GUI) citeturn0search5
 
-function setChip(id, text){ $(id).textContent = text; }
-function sanitizeHost(v){
-  if (!v) return "";
-  v = v.trim();
-  v = v.replace(/^https?:\/\//i, "");
-  v = v.replace(/\/$/,"");
-  return v;
-}
-function urlFor(host, path){
-  const h = sanitizeHost(host);
-  return `http://${h}${path}`;
-}
-function nowIso(){ try { return new Date().toISOString(); } catch { return ""; } }
+const CFG = {
+  apOrigin: "http://4.3.2.1",
+  apWifiSetupUrl: "http://4.3.2.1/settings/wifi",
+  mdnsOrigin: "http://seazencity.local",
+  infoPath: "/json/info",
+  statePath: "/json/state",
 
-function classifyError(err){
-  const msg = String(err?.message || err || "");
-  const hints = [];
-  hints.push("Запрос не выполнился на уровне fetch.");
-  hints.push(`Ошибка: ${msg}`);
-  hints.push("Проверка 1: открой http://HOST/ в обычном Chrome.");
-  hints.push("Проверка 2: открой http://HOST/json/info в обычном Chrome.");
-  hints.push("Если Chrome показал разовый запрос разрешения, разреши и повтори.");
-  hints.push("Точные причины зависят от версии Chrome и Android.");
-  return hints.join("\n");
-}
+  fetchTimeoutMs: 3500,
+  mdnsTryTotalMs: 12000,
+  mdnsTryIntervalMs: 1200,
+  apPollTotalMs: 30000,
+  apPollIntervalMs: 1200,
+  shortFailMessageMs: 1700,
+};
 
-async function fetchJson(url, opts = {}){
-  const started = performance.now();
-  const res = await fetch(url, {
-    method: opts.method || "GET",
-    headers: Object.assign({ "Accept": "application/json" }, opts.headers || {}),
-    body: opts.body ? JSON.stringify(opts.body) : undefined,
-    cache: "no-store",
-    mode: "cors",
-  });
-  const ms = Math.round(performance.now() - started);
-  const text = await res.text();
-  let json = null;
-  try { json = JSON.parse(text); } catch { json = null; }
-  return {
-    ok: res.ok,
-    status: res.status,
-    ms,
-    headers: {
-      "content-type": res.headers.get("content-type") || "",
-      "content-length": res.headers.get("content-length") || "",
-    },
-    text,
-    json,
-  };
+const LS = {
+  baseOrigin: "seazencity_base_origin",
+  lastOkAt: "seazencity_last_ok_at",
+};
+
+const UI = {
+  title: document.getElementById("title"),
+  text: document.getElementById("text"),
+  meta: document.getElementById("meta"),
+  actions: document.getElementById("actions"),
+  control: document.getElementById("control"),
+  btnToggle: document.getElementById("btnToggle"),
+  btnRefresh: document.getElementById("btnRefresh"),
+  ctlStatus: document.getElementById("ctlStatus"),
+  debug: document.getElementById("debug"),
+};
+
+function stamp() {
+  const d = new Date();
+  const pad = (n) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
 }
 
-function setLastUrl(url){ setChip("chipLastUrl", `Last URL: ${url}`); }
-function setDiag(human, raw){
-  $("humanDiag").textContent = human || "-";
-  $("rawDiag").textContent = raw || "-";
+function log(msg) {
+  const line = `[${stamp()}] ${msg}`;
+  const cur = UI.debug.textContent || "";
+  UI.debug.textContent = line + "\n" + cur;
 }
-function setCacheOut(text){ $("cacheOut").textContent = text || "-"; }
 
-function saveHost(host){ try { localStorage.setItem("wled_host", host); } catch {} }
-function loadHost(){ try { return localStorage.getItem("wled_host") || ""; } catch { return ""; } }
+function escapeHtml(s) {
+  return String(s)
+    .replaceAll("&", "&amp;")
+    .replaceAll("<", "&lt;")
+    .replaceAll(">", "&gt;")
+    .replaceAll('"', "&quot;")
+    .replaceAll("'", "&#039;");
+}
 
-let toggleState = false;
+function setMetaChips(items) {
+  if (!items || items.length === 0) {
+    UI.meta.innerHTML = "";
+    return;
+  }
+  const chips = items.map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join("");
+  UI.meta.innerHTML = `<div class="chips">${chips}</div>`;
+}
 
-async function doGetInfo(){
-  const host = sanitizeHost($("hostInput").value);
-  if (!host) { setDiag("Введи host.", ""); return; }
-  saveHost(host);
+function setActions(actions) {
+  UI.actions.innerHTML = "";
+  for (const a of actions) {
+    const el = a.href ? document.createElement("a") : document.createElement("button");
+    el.className = "btn" + (a.primary ? " primary" : "");
+    el.textContent = a.label;
 
-  const url = urlFor(host, "/json/info");
-  setLastUrl(url);
-  setDiag("Выполняю запрос...", "");
-  try{
-    const out = await fetchJson(url);
-    setChip("chipResult", `RESULT: HTTP ${out.status} (${out.ms}ms)`);
-    if (out.ok && out.json){
-      setDiag("Ответ получен.", JSON.stringify(out, null, 2));
+    if (a.href) {
+      el.href = a.href;
+      el.rel = "noopener";
+      el.target = "_self";
     } else {
-      setDiag("Сервер ответил, но JSON не распарсился или статус не OK.", JSON.stringify(out, null, 2));
+      el.onclick = a.onClick;
+      if (a.disabled) el.disabled = true;
     }
-  } catch(err){
-    setChip("chipResult", "RESULT: error");
-    setDiag(classifyError(err), JSON.stringify({ time: nowIso(), error: String(err), stack: err?.stack || "" }, null, 2));
+
+    UI.actions.appendChild(el);
   }
 }
 
-async function doToggle(){
-  const host = sanitizeHost($("hostInput").value);
-  if (!host) { setDiag("Введи host.", ""); return; }
-  saveHost(host);
-
-  toggleState = !toggleState;
-  const url = urlFor(host, "/json/state");
-  setLastUrl(url);
-  setDiag("Отправляю POST /json/state ...", "");
-  try{
-    const out = await fetchJson(url, { method: "POST", body: { on: toggleState } });
-    setChip("chipResult", `RESULT: HTTP ${out.status} (${out.ms}ms)`);
-    if (out.ok){
-      setDiag(`Ответ получен. Команда on=${toggleState} отправлена.`, JSON.stringify(out, null, 2));
-    } else {
-      setDiag("Сервер ответил, но статус не OK.", JSON.stringify(out, null, 2));
-    }
-  } catch(err){
-    setChip("chipResult", "RESULT: error");
-    setDiag(classifyError(err), JSON.stringify({ time: nowIso(), error: String(err), stack: err?.stack || "" }, null, 2));
-  }
+function setScreen({ title, text, chips = [], actions = [], showControl = false }) {
+  UI.title.textContent = title;
+  UI.text.textContent = text;
+  setMetaChips(chips);
+  setActions(actions);
+  UI.control.style.display = showControl ? "block" : "none";
 }
 
-async function doCacheTest(){
-  const url = "./cache-test.txt?ts=" + Date.now();
-  try{
-    const res = await fetch(url, { cache: "reload" });
-    const text = await res.text();
-    setCacheOut(`status=${res.status} ok=${res.ok}\n` + text);
-  } catch(err){
-    setCacheOut(JSON.stringify({ error: String(err), stack: err?.stack || "" }, null, 2));
-  }
+function saveBaseOrigin(origin) {
+  localStorage.setItem(LS.baseOrigin, origin);
+  localStorage.setItem(LS.lastOkAt, String(Date.now()));
 }
 
-async function forceUpdateAndReload(){
-  try{
-    const regs = await navigator.serviceWorker.getRegistrations();
-    for (const r of regs){
-      try { await r.update(); } catch {}
-      try { await r.unregister(); } catch {}
-    }
-    if (window.caches){
-      const keys = await caches.keys();
-      for (const k of keys){
-        if (k.startsWith("seazencity-")){
-          try { await caches.delete(k); } catch {}
-        }
-      }
-    }
-  } catch {}
-  location.reload();
+function loadBaseOrigin() {
+  return localStorage.getItem(LS.baseOrigin) || "";
 }
 
-function openUrl(url){ window.location.href = url; }
-
-function openWifiSettings(){
-  const intent = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
-  try { window.location.href = intent; } catch {}
-}
-
-function initMeta(){
-  setChip("chipOrigin", "Origin: " + location.origin);
-  setChip("chipProto", "Protocol: " + location.protocol);
-  $("uiVer").textContent = UI_VERSION;
-  setChip("chipSW", "SW: " + (("serviceWorker" in navigator) ? "supported" : "no"));
-}
-
-async function initSW(){
-  if (!("serviceWorker" in navigator)) return;
-  try{
-    const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-    const st = reg.active ? "active" : (reg.waiting ? "waiting" : (reg.installing ? "installing" : "registered"));
-    setChip("chipSW", "SW: " + st);
+function wifiSettingsIntent() {
+  try {
+    window.location.href = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
   } catch {
-    setChip("chipSW", "SW: error");
+    log("Не удалось открыть настройки Wi-Fi через intent.");
   }
 }
 
-function wire(){
-  $("btnOpenWifi").addEventListener("click", () => openWifiSettings());
-  $("btnOpenAp").addEventListener("click", () => openUrl("http://4.3.2.1/"));
-  $("btnOpenApWifiSetup").addEventListener("click", () => openUrl("http://4.3.2.1/settings/wifi"));
-  $("btnIConnected").addEventListener("click", () => {
-    $("hostInput").value = "seazencity.local";
-    saveHost("seazencity.local");
-    setDiag("Ок. Теперь подключись обратно к своему Wi‑Fi и нажми GET /json/info.", "");
-    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
-  });
-
-  $("btnTryMdns").addEventListener("click", () => { $("hostInput").value = "seazencity.local"; saveHost("seazencity.local"); });
-
-  $("btnOpenHost").addEventListener("click", () => {
-    const host = sanitizeHost($("hostInput").value || "seazencity.local");
-    openUrl(`http://${host}/`);
-  });
-
-  $("btnGetInfo").addEventListener("click", doGetInfo);
-  $("btnToggle").addEventListener("click", doToggle);
-  $("btnCacheTest").addEventListener("click", doCacheTest);
-  $("btnForceUpdate").addEventListener("click", forceUpdateAndReload);
-
-  $("hostInput").value = loadHost() || "seazencity.local";
+function openSameTab(url) {
+  window.location.href = url;
 }
 
-(function main(){
-  initMeta();
-  wire();
-  initSW();
-})();
+async function fetchWithTimeout(url, opts = {}, timeoutMs = CFG.fetchTimeoutMs) {
+  const ctrl = new AbortController();
+  const t = setTimeout(() => ctrl.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...opts, signal: ctrl.signal, cache: "no-store" });
+  } finally {
+    clearTimeout(t);
+  }
+}
+
+async function getJson(origin, path, timeoutMs = CFG.fetchTimeoutMs) {
+  const url = origin + path;
+  const res = await fetchWithTimeout(url, { method: "GET" }, timeoutMs);
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+  return await res.json();
+}
+
+async function postJson(origin, path, bodyObj, timeoutMs = CFG.fetchTimeoutMs) {
+  const url = origin + path;
+  const res = await fetchWithTimeout(
+    url,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(bodyObj),
+    },
+    timeoutMs
+  );
+  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
+  return await res.json();
+}
+
+async function tryReadState(origin) {
+  return await getJson(origin, CFG.statePath, 3000);
+}
+
+async function tryToggle(origin, on) {
+  return await postJson(origin, CFG.statePath, { on }, 3500);
+}
+
+async function tryMdnsUntilOk() {
+  const start = Date.now();
+  while (Date.now() - start < CFG.mdnsTryTotalMs) {
+    try {
+      log("Пробуем продолжить автоматически (mDNS)…");
+      const info = await getJson(CFG.mdnsOrigin, CFG.infoPath, 3000);
+      log(`mDNS OK. info.ip="${(info && info.ip) ? info.ip : ""}"`);
+      saveBaseOrigin(CFG.mdnsOrigin);
+      return true;
+    } catch (e) {
+      log(`mDNS нет: ${String(e.message || e)}`);
+      await new Promise((r) => setTimeout(r, CFG.mdnsTryIntervalMs));
+    }
+  }
+  return false;
+}
+
+async function readStaIpFromApPoll() {
+  const start = Date.now();
+  while (Date.now() - start < CFG.apPollTotalMs) {
+    try {
+      const info = await getJson(CFG.apOrigin, CFG.infoPath, 2500);
+      const ip = (info && typeof info.ip === "string") ? info.ip.trim() : "";
+      log(`AP /json/info ip="${ip}"`);
+      if (ip) return ip;
+    } catch (e) {
+      log(`AP /json/info недоступен: ${String(e.message || e)}`);
+    }
+    await new Promise((r) => setTimeout(r, CFG.apPollIntervalMs));
+  }
+  return "";
+}
+
+async function screenStart() {
+  setScreen({
+    title: "Подключение лампы",
+    text: "Чтобы начать, подключитесь к сети seazencity.",
+    chips: ["Сеть: seazencity", "Пароль: не требуется"],
+    actions: [
+      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
+      { label: "Я подключился", primary: true, onClick: screenOpenWifiSetup },
+    ],
+  });
+}
+
+async function screenOpenWifiSetup() {
+  setScreen({
+    title: "Настройка подключения",
+    text: "Откроем настройку подключения.",
+    actions: [
+      { label: "Продолжить", primary: true, onClick: () => openSameTab(CFG.apWifiSetupUrl) },
+      { label: "Назад", onClick: screenReturnHome },
+    ],
+  });
+}
+
+async function screenReturnHome() {
+  setScreen({
+    title: "Подключаемся",
+    text: "Переключитесь обратно на свою сеть Wi-Fi и вернитесь в приложение.",
+    actions: [
+      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
+      { label: "Я вернулся", primary: true, onClick: screenDiscover },
+    ],
+  });
+}
+
+async function screenDiscover() {
+  setScreen({
+    title: "Подключаемся",
+    text: "Продолжаем автоматически.",
+    actions: [],
+  });
+
+  const saved = loadBaseOrigin();
+  if (saved) {
+    try {
+      log(`Пробуем сохранённый адрес: ${saved}`);
+      const st = await tryReadState(saved);
+      log(`Сохранённый адрес OK. on=${!!st.on}`);
+      return screenControl(saved);
+    } catch (e) {
+      log(`Сохранённый адрес не отвечает: ${String(e.message || e)}`);
+    }
+  }
+
+  const ok = await tryMdnsUntilOk();
+  if (ok) return screenControl(CFG.mdnsOrigin);
+
+  return screenNeedApFallback();
+}
+
+async function screenNeedApFallback() {
+  setScreen({
+    title: "Продолжим",
+    text: "Подключитесь к сети seazencity и нажмите Продолжить.",
+    chips: ["Сеть: seazencity", "Пароль: не требуется"],
+    actions: [
+      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
+      { label: "Продолжить", primary: true, onClick: screenReadIpFromAp },
+    ],
+  });
+}
+
+async function screenReadIpFromAp() {
+  setScreen({
+    title: "Подключаемся",
+    text: "Продолжаем автоматически.",
+    actions: [],
+  });
+
+  const ip = await readStaIpFromApPoll();
+
+  if (!ip) {
+    setScreen({
+      title: "Подключаемся",
+      text: "Проверьте сеть и пароль и попробуйте ещё раз.",
+      actions: [],
+    });
+    log("STA IP не появился. Открываем WiFi Setup снова.");
+    setTimeout(() => openSameTab(CFG.apWifiSetupUrl), CFG.shortFailMessageMs);
+    return;
+  }
+
+  const ipOrigin = `http://${ip}`;
+  log(`Получили STA IP из AP: ${ipOrigin}`);
+  saveBaseOrigin(ipOrigin);
+
+  setScreen({
+    title: "Подключаемся",
+    text: "Переключитесь обратно на свою сеть Wi-Fi и вернитесь в приложение.",
+    actions: [
+      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
+      { label: "Я вернулся", primary: true, onClick: () => screenControl(ipOrigin) },
+    ],
+  });
+}
+
+async function screenControl(origin) {
+  setScreen({
+    title: "Лампа готова",
+    text: "Управление доступно.",
+    actions: [],
+    showControl: true,
+  });
+
+  UI.btnRefresh.onclick = async () => refreshControl(origin);
+  UI.btnToggle.onclick = async () => toggleControl(origin);
+
+  await refreshControl(origin);
+}
+
+async function refreshControl(origin) {
+  UI.ctlStatus.textContent = "обновление…";
+  try {
+    const st = await tryReadState(origin);
+    const on = !!st.on;
+    UI.btnToggle.textContent = on ? "Выключить" : "Включить";
+    UI.ctlStatus.textContent = on ? "включено" : "выключено";
+    localStorage.setItem(LS.lastOkAt, String(Date.now()));
+    log(`STATE OK (${origin}) on=${on}`);
+  } catch (e) {
+    UI.ctlStatus.textContent = "нет связи";
+    log(`STATE fail (${origin}): ${String(e.message || e)}`);
+    setTimeout(() => screenDiscover(), 600);
+  }
+}
+
+async function toggleControl(origin) {
+  UI.ctlStatus.textContent = "отправка…";
+  try {
+    const cur = await tryReadState(origin);
+    const next = !cur.on;
+    const st = await tryToggle(origin, next);
+    const on = !!st.on;
+    UI.btnToggle.textContent = on ? "Выключить" : "Включить";
+    UI.ctlStatus.textContent = on ? "включено" : "выключено";
+    localStorage.setItem(LS.lastOkAt, String(Date.now()));
+    log(`TOGGLE OK (${origin}) on=${on}`);
+  } catch (e) {
+    UI.ctlStatus.textContent = "не удалось";
+    log(`TOGGLE fail (${origin}): ${String(e.message || e)}`);
+  }
+}
+
+async function registerSW() {
+  if (!("serviceWorker" in navigator)) return;
+  try {
+    await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+    log("Service Worker: OK");
+  } catch (e) {
+    log(`Service Worker: fail ${String(e.message || e)}`);
+  }
+}
+
+window.addEventListener("load", async () => {
+  UI.debug.textContent = "";
+  await registerSW();
+  await screenStart();
+});
