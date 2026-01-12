@@ -1,66 +1,104 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
 <head>
-  <meta charset="utf-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="theme-color" content="#000000" />
 
-  <title>Seazencity Lamp</title>
+  <title>Seazencity Lamp - PWA + WLED test</title>
 
-  <!-- ОБЯЗАТЕЛЬНО: путь абсолютный, с /seazencity/ -->
-  <link rel="manifest" href="/seazencity/manifest.webmanifest">
-
-  <meta name="theme-color" content="#000000">
-  <meta name="background-color" content="#000000">
+  <link rel="manifest" href="./manifest.webmanifest">
+  <link rel="icon" href="./icon-192.png">
 
   <style>
-    body {
-      margin: 0;
-      height: 100vh;
-      background: black;
-      color: white;
-      font-family: system-ui, sans-serif;
-      display: flex;
-      align-items: center;
-      justify-content: center;
-      text-align: center;
+    :root { color-scheme: dark; }
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Arial; background:#000; color:#fff; }
+    .wrap { max-width: 820px; margin: 0 auto; padding: 20px; }
+    h1 { font-size: 34px; margin: 0 0 8px; }
+    .big { font-size: 18px; line-height: 1.4; opacity: 0.95; }
+    .card { margin-top: 16px; padding: 16px; background: rgba(255,255,255,0.06); border-radius: 14px; }
+    .row { display:flex; gap:10px; flex-wrap:wrap; align-items:center; }
+    label { font-size: 14px; opacity: 0.9; display:block; margin-bottom:6px; }
+    input[type="text"] { width: 260px; max-width: 100%; padding: 12px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.2); background: rgba(0,0,0,0.35); color:#fff; }
+    input[type="range"] { width: 260px; }
+    button {
+      padding: 12px 14px; border-radius: 12px; border: 1px solid rgba(255,255,255,0.2);
+      background: rgba(255,255,255,0.10); color:#fff; font-weight: 600;
     }
-    h1 {
-      font-size: 28px;
-      margin-bottom: 20px;
-    }
-    p {
-      font-size: 16px;
-      opacity: 0.85;
-    }
+    button:active { transform: scale(0.99); }
+    .pill { display:inline-block; padding:6px 10px; border-radius: 999px; background: rgba(255,255,255,0.09); font-size: 13px; }
+    .ok { color: #9cff9c; }
+    .bad { color: #ff9c9c; }
+    .mono { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: 13px; white-space: pre-wrap; }
+    .hint { opacity: 0.75; font-size: 13px; line-height: 1.35; }
   </style>
 </head>
+
 <body>
+  <div class="wrap">
+    <h1>✅ PWA + WLED тест</h1>
+    <div class="big">
+      <div><b>Что должно работать:</b></div>
+      <div>1) Установка PWA: Chrome ⋮ → <b>Add to Home screen</b></div>
+      <div>2) Управление WLED: ON/OFF, яркость, пресет</div>
+      <div>3) Тест кэша без отключения интернета: включаешь <b>Simulate offline</b> и перезагружаешь страницу</div>
+    </div>
 
-<div>
-  <h1>✅ PWA ДОЛЖНО УСТАНАВЛИВАТЬСЯ</h1>
+    <div class="card">
+      <div class="row" style="justify-content: space-between;">
+        <div class="pill" id="swStatus">Service Worker: …</div>
+        <div class="pill" id="cacheStatus">Cache: …</div>
+        <div class="pill" id="netMode">Mode: …</div>
+      </div>
+      <div style="height:10px;"></div>
+      <div class="hint">
+        Если после обновления файлов изменения не видны - это кэш браузера/Service Worker.
+        Нажми кнопку <b>Force update</b> ниже, затем обнови страницу.
+      </div>
+      <div style="height:12px;"></div>
+      <div class="row">
+        <button id="btnForceUpdate">Force update (SW + cache)</button>
+        <button id="btnSimOffline">Simulate offline: OFF</button>
+      </div>
+    </div>
 
-  <p>
-    Открой меню браузера (⋮)<br>
-    и нажми <b>Install app</b><br>
-    или <b>Добавить на главный экран</b>
-  </p>
+    <div class="card">
+      <h2 style="margin:0 0 12px;">WLED подключение</h2>
+      <div class="row">
+        <div>
+          <label for="wledHost">WLED host (IP или mdns)</label>
+          <input id="wledHost" type="text" placeholder="например 192.168.4.1 или wled.local" />
+          <div class="hint">Используем JSON API: POST на <span class="mono">http://HOST/json/state</span>. 1</div>
+        </div>
+        <div class="row" style="align-items:flex-end;">
+          <button id="btnPing">Ping (/json/info)</button>
+          <button id="btnOn">ON</button>
+          <button id="btnOff">OFF</button>
+        </div>
+      </div>
 
-  <p style="margin-top:20px">
-    Если приложение уже установлено – всё работает правильно.
-  </p>
-</div>
+      <div style="height:10px;"></div>
 
-<script>
-  // БЕЗ ЭТОГО КНОПКИ INSTALL НЕ БУДЕТ
-  if ("serviceWorker" in navigator) {
-    navigator.serviceWorker.register(
-      "/seazencity/sw.js",
-      { scope: "/seazencity/" }
-    ).then(() => {
-      console.log("Service worker registered");
-    });
-  }
-</script>
+      <div class="row">
+        <div>
+          <label for="bri">Яркость</label>
+          <input id="bri" type="range" min="1" max="255" value="128" />
+          <div class="hint">Отправляет <span class="mono">{"bri":N}</span> в <span class="mono">/json/state</span>. 2</div>
+        </div>
+        <div>
+          <label for="preset">Preset ID</label>
+          <input id="preset" type="text" placeholder="например 1" />
+          <div class="hint">Отправляет <span class="mono">{"ps":ID}</span> в <span class="mono">/json/state</span>. 3</div>
+        </div>
+        <div class="row" style="align-items:flex-end;">
+          <button id="btnPreset">Apply preset</button>
+        </div>
+      </div>
 
-</body>
-</html>
+      <div style="height:10px;"></div>
+      <div class="pill" id="wledStatus">WLED: …</div>
+      <div style="height:10px;"></div>
+      <div class="mono" id="log"></div>
+    </div>
+
+    <div class
