@@ -1,14 +1,10 @@
-// Минимальный SW: кэширует только локальные файлы PWA.
-// ВАЖНО: он НЕ "проксирует" WLED. Он только про кэш UI.
-
-const CACHE = "seazencity-pwa-test-v3";
+const CACHE = "seazencity-master-v1";
 const ASSETS = [
   "./",
   "./index.html",
   "./manifest.webmanifest",
   "./icon-192.png",
   "./icon-512.png",
-  "./cache-test.txt",
   "./sw.js",
 ];
 
@@ -31,7 +27,7 @@ self.addEventListener("activate", (event) => {
 self.addEventListener("fetch", (event) => {
   const url = new URL(event.request.url);
 
-  // Кэшируем только свои файлы (тот же origin). Это важно.
+  // кэшируем только собственный origin
   if (url.origin !== self.location.origin) return;
 
   event.respondWith((async () => {
@@ -40,7 +36,6 @@ self.addEventListener("fetch", (event) => {
     if (cached) return cached;
 
     const res = await fetch(event.request);
-    // Кладём в кэш только успешные ответы.
     if (res && res.ok) cache.put(event.request, res.clone());
     return res;
   })());
