@@ -1,230 +1,198 @@
-(() => {
-  const $ = (id) => document.getElementById(id);
+const UI_VERSION = "2026-01-12-a";
+const $ = (id) => document.getElementById(id);
 
-  const swStatus = $("swStatus");
-  const cacheStatus = $("cacheStatus");
-  const netMode = $("netMode");
-  const logEl = $("log");
-  const wledStatus = $("wledStatus");
+function setChip(id, text){ $(id).textContent = text; }
+function sanitizeHost(v){
+  if (!v) return "";
+  v = v.trim();
+  v = v.replace(/^https?:\/\//i, "");
+  v = v.replace(/\/$/,"");
+  return v;
+}
+function urlFor(host, path){
+  const h = sanitizeHost(host);
+  return `http://${h}${path}`;
+}
+function nowIso(){ try { return new Date().toISOString(); } catch { return ""; } }
 
-  const btnForceUpdate = $("btnForceUpdate");
-  const btnSimOffline = $("btnSimOffline");
+function classifyError(err){
+  const msg = String(err?.message || err || "");
+  const hints = [];
+  hints.push("Запрос не выполнился на уровне fetch.");
+  hints.push(`Ошибка: ${msg}`);
+  hints.push("Проверка 1: открой http://HOST/ в обычном Chrome.");
+  hints.push("Проверка 2: открой http://HOST/json/info в обычном Chrome.");
+  hints.push("Если Chrome показал разовый запрос разрешения, разреши и повтори.");
+  hints.push("Точные причины зависят от версии Chrome и Android.");
+  return hints.join("\n");
+}
 
-  const wledHost = $("wledHost");
-  const btnPing = $("btnPing");
-  const btnOn = $("btnOn");
-  const btnOff = $("btnOff");
-  const bri = $("bri");
-  const preset = $("preset");
-  const btnPreset = $("btnPreset");
+async function fetchJson(url, opts = {}){
+  const started = performance.now();
+  const res = await fetch(url, {
+    method: opts.method || "GET",
+    headers: Object.assign({ "Accept": "application/json" }, opts.headers || {}),
+    body: opts.body ? JSON.stringify(opts.body) : undefined,
+    cache: "no-store",
+    mode: "cors",
+  });
+  const ms = Math.round(performance.now() - started);
+  const text = await res.text();
+  let json = null;
+  try { json = JSON.parse(text); } catch { json = null; }
+  return {
+    ok: res.ok,
+    status: res.status,
+    ms,
+    headers: {
+      "content-type": res.headers.get("content-type") || "",
+      "content-length": res.headers.get("content-length") || "",
+    },
+    text,
+    json,
+  };
+}
 
-  const LS_HOST = "seazencity_wled_host";
-  const LS_SIMOFF = "seazencity_sim_offline";
+function setLastUrl(url){ setChip("chipLastUrl", `Last URL: ${url}`); }
+function setDiag(human, raw){
+  $("humanDiag").textContent = human || "-";
+  $("rawDiag").textContent = raw || "-";
+}
+function setCacheOut(text){ $("cacheOut").textContent = text || "-"; }
 
-  function log(line) {
-    const ts = new Date().toLocaleTimeString();
-    logEl.textContent = `[${ts}] ${line}\n` + logEl.textContent;
-  }
+function saveHost(host){ try { localStorage.setItem("wled_host", host); } catch {} }
+function loadHost(){ try { return localStorage.getItem("wled_host") || ""; } catch { return ""; } }
 
-  function setPill(el, text, ok = null) {
-    el.textContent = text;
-    el.classList.remove("ok", "bad");
-    if (ok === true) el.classList.add("ok");
-    if (ok === false) el.classList.add("bad");
-  }
+let toggleState = false;
 
-  function isSimOffline() {
-    return localStorage.getItem(LS_SIMOFF) === "1";
-  }
+async function doGetInfo(){
+  const host = sanitizeHost($("hostInput").value);
+  if (!host) { setDiag("Введи host.", ""); return; }
+  saveHost(host);
 
-  function updateModeUI() {
-    const on = isSimOffline();
-    btnSimOffline.textContent = `Simulate offline: ${on ? "ON" : "OFF"}`;
-    setPill(netMode, `Mode: ${on ? "SIMULATED OFFLINE" : "NORMAL"}`, on ? false : true);
-  }
-
-  function normalizeHost(s) {
-    s = (s || "").trim();
-    if (!s) return "";
-    // allow "192.168.x.x" or "wled.local"
-    // If user already typed scheme, keep it.
-    if (s.startsWith("http://") || s.startsWith("https://")) return s.replace(/\/+$/, "");
-    return "http://" + s.replace(/\/+$/, "");
-  }
-
-  async function fetchWithTimeout(url, opts = {}, timeoutMs = 2500) {
-    const ctrl = new AbortController();
-    const t = setTimeout(() => ctrl.abort(), timeoutMs);
-    try {
-      const headers = new Headers(opts.headers || {});
-      // We use this query flag so SW can force-cache mode without cutting internet.
-      // (SW checks ?__offline=1)
-      const u = new URL(url);
-      if (isSimOffline()) u.searchParams.set("__offline", "1");
-      return await fetch(u.toString(), { ...opts, headers, signal: ctrl.signal });
-    } finally {
-      clearTimeout(t);
+  const url = urlFor(host, "/json/info");
+  setLastUrl(url);
+  setDiag("Выполняю запрос...", "");
+  try{
+    const out = await fetchJson(url);
+    setChip("chipResult", `RESULT: HTTP ${out.status} (${out.ms}ms)`);
+    if (out.ok && out.json){
+      setDiag("Ответ получен.", JSON.stringify(out, null, 2));
+    } else {
+      setDiag("Сервер ответил, но JSON не распарсился или статус не OK.", JSON.stringify(out, null, 2));
     }
+  } catch(err){
+    setChip("chipResult", "RESULT: error");
+    setDiag(classifyError(err), JSON.stringify({ time: nowIso(), error: String(err), stack: err?.stack || "" }, null, 2));
   }
+}
 
-  async function wledPostState(obj) {
-    const host = normalizeHost(wledHost.value);
-    if (!host) {
-      setPill(wledStatus, "WLED: host пустой", false);
-      return;
+async function doToggle(){
+  const host = sanitizeHost($("hostInput").value);
+  if (!host) { setDiag("Введи host.", ""); return; }
+  saveHost(host);
+
+  toggleState = !toggleState;
+  const url = urlFor(host, "/json/state");
+  setLastUrl(url);
+  setDiag("Отправляю POST /json/state ...", "");
+  try{
+    const out = await fetchJson(url, { method: "POST", body: { on: toggleState } });
+    setChip("chipResult", `RESULT: HTTP ${out.status} (${out.ms}ms)`);
+    if (out.ok){
+      setDiag(`Ответ получен. Команда on=${toggleState} отправлена.`, JSON.stringify(out, null, 2));
+    } else {
+      setDiag("Сервер ответил, но статус не OK.", JSON.stringify(out, null, 2));
     }
-
-    // В simulated-offline мы намеренно "ломаем" WLED запросы, чтобы тест был честный.
-    if (isSimOffline()) {
-      setPill(wledStatus, "WLED: simulated-offline (запросы отключены)", false);
-      log("Simulated-offline: WLED request blocked by app.");
-      return;
-    }
-
-    const url = `${host}/json/state`;
-    try {
-      const res = await fetchWithTimeout(url, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(obj),
-      }, 3500);
-
-      if (!res.ok) {
-        setPill(wledStatus, `WLED: HTTP ${res.status}`, false);
-        log(`WLED POST failed: HTTP ${res.status}`);
-        return;
-      }
-      const data = await res.json().catch(() => null);
-      setPill(wledStatus, "WLED: OK", true);
-      log(`WLED POST OK -> ${JSON.stringify(obj)}`);
-      if (data && data.state) log(`state.on=${data.state.on} bri=${data.state.bri} ps=${data.state.ps}`);
-    } catch (e) {
-      setPill(wledStatus, `WLED: error (${e.name || "?"})`, false);
-      log(`WLED POST error: ${String(e)}`);
-    }
+  } catch(err){
+    setChip("chipResult", "RESULT: error");
+    setDiag(classifyError(err), JSON.stringify({ time: nowIso(), error: String(err), stack: err?.stack || "" }, null, 2));
   }
+}
 
-  async function wledPing() {
-    const host = normalizeHost(wledHost.value);
-    if (!host) {
-      setPill(wledStatus, "WLED: host пустой", false);
-      return;
-    }
-    if (isSimOffline()) {
-      setPill(wledStatus, "WLED: simulated-offline (ping отключен)", false);
-      log("Simulated-offline: WLED ping blocked by app.");
-      return;
-    }
-
-    const url = `${host}/json/info`;
-    try {
-      const res = await fetchWithTimeout(url, { method: "GET" }, 2500);
-      if (!res.ok) {
-        setPill(wledStatus, `WLED: ping HTTP ${res.status}`, false);
-        log(`Ping failed: HTTP ${res.status}`);
-        return;
-      }
-      const info = await res.json().catch(() => null);
-      setPill(wledStatus, "WLED: ping OK", true);
-      if (info && info.name) log(`Device name: ${info.name}`);
-      if (info && info.ver) log(`WLED ver: ${info.ver}`);
-    } catch (e) {
-      setPill(wledStatus, `WLED: ping error (${e.name || "?"})`, false);
-      log(`Ping error: ${String(e)}`);
-    }
+async function doCacheTest(){
+  const url = "./cache-test.txt?ts=" + Date.now();
+  try{
+    const res = await fetch(url, { cache: "reload" });
+    const text = await res.text();
+    setCacheOut(`status=${res.status} ok=${res.ok}\n` + text);
+  } catch(err){
+    setCacheOut(JSON.stringify({ error: String(err), stack: err?.stack || "" }, null, 2));
   }
+}
 
-  async function updateCacheBadge() {
-    if (!("caches" in window)) {
-      setPill(cacheStatus, "Cache: unsupported", false);
-      return;
+async function forceUpdateAndReload(){
+  try{
+    const regs = await navigator.serviceWorker.getRegistrations();
+    for (const r of regs){
+      try { await r.update(); } catch {}
+      try { await r.unregister(); } catch {}
     }
-    try {
+    if (window.caches){
       const keys = await caches.keys();
-      setPill(cacheStatus, `Cache: ${keys.length} caches`, true);
-    } catch {
-      setPill(cacheStatus, "Cache: error", false);
-    }
-  }
-
-  // Service Worker
-  async function setupSW() {
-    if (!("serviceWorker" in navigator)) {
-      setPill(swStatus, "Service Worker: unsupported", false);
-      return;
-    }
-    try {
-      const reg = await navigator.serviceWorker.register("./sw.js");
-      setPill(swStatus, "Service Worker: registered", true);
-
-      // If SW updated, reload on controller change
-      navigator.serviceWorker.addEventListener("controllerchange", () => {
-        log("SW controller changed -> reload recommended");
-      });
-
-      if (reg.waiting) log("SW waiting (new version). Press Force update.");
-      await updateCacheBadge();
-    } catch (e) {
-      setPill(swStatus, "Service Worker: register error", false);
-      log(`SW register error: ${String(e)}`);
-    }
-  }
-
-  btnForceUpdate.addEventListener("click", async () => {
-    log("Force update requested.");
-    try {
-      const reg = await navigator.serviceWorker.getRegistration();
-      if (reg) {
-        await reg.update();
-        if (reg.waiting) {
-          // Tell SW to activate immediately
-          reg.waiting.postMessage({ type: "SKIP_WAITING" });
-          log("Sent SKIP_WAITING to waiting SW.");
-        } else {
-          log("No waiting SW detected.");
+      for (const k of keys){
+        if (k.startsWith("seazencity-")){
+          try { await caches.delete(k); } catch {}
         }
-      } else {
-        log("No SW registration found.");
       }
-      await updateCacheBadge();
-    } catch (e) {
-      log(`Force update error: ${String(e)}`);
     }
+  } catch {}
+  location.reload();
+}
+
+function openUrl(url){ window.location.href = url; }
+
+function openWifiSettings(){
+  const intent = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
+  try { window.location.href = intent; } catch {}
+}
+
+function initMeta(){
+  setChip("chipOrigin", "Origin: " + location.origin);
+  setChip("chipProto", "Protocol: " + location.protocol);
+  $("uiVer").textContent = UI_VERSION;
+  setChip("chipSW", "SW: " + (("serviceWorker" in navigator) ? "supported" : "no"));
+}
+
+async function initSW(){
+  if (!("serviceWorker" in navigator)) return;
+  try{
+    const reg = await navigator.serviceWorker.register("./sw.js", { scope: "./" });
+    const st = reg.active ? "active" : (reg.waiting ? "waiting" : (reg.installing ? "installing" : "registered"));
+    setChip("chipSW", "SW: " + st);
+  } catch {
+    setChip("chipSW", "SW: error");
+  }
+}
+
+function wire(){
+  $("btnOpenWifi").addEventListener("click", () => openWifiSettings());
+  $("btnOpenAp").addEventListener("click", () => openUrl("http://4.3.2.1/"));
+  $("btnOpenApWifiSetup").addEventListener("click", () => openUrl("http://4.3.2.1/settings/wifi"));
+  $("btnIConnected").addEventListener("click", () => {
+    $("hostInput").value = "seazencity.local";
+    saveHost("seazencity.local");
+    setDiag("Ок. Теперь подключись обратно к своему Wi‑Fi и нажми GET /json/info.", "");
+    window.scrollTo({ top: document.body.scrollHeight, behavior: "smooth" });
   });
 
-  btnSimOffline.addEventListener("click", async () => {
-    const now = isSimOffline();
-    localStorage.setItem(LS_SIMOFF, now ? "0" : "1");
-    updateModeUI();
-    log(`Simulate offline -> ${!now ? "ON" : "OFF"}`);
+  $("btnTryMdns").addEventListener("click", () => { $("hostInput").value = "seazencity.local"; saveHost("seazencity.local"); });
+
+  $("btnOpenHost").addEventListener("click", () => {
+    const host = sanitizeHost($("hostInput").value || "seazencity.local");
+    openUrl(`http://${host}/`);
   });
 
-  btnPing.addEventListener("click", wledPing);
-  btnOn.addEventListener("click", () => wledPostState({ on: true }));
-  btnOff.addEventListener("click", () => wledPostState({ on: false }));
-  btnPreset.addEventListener("click", () => {
-    const id = parseInt((preset.value || "").trim(), 10);
-    if (!Number.isFinite(id)) {
-      log("Preset ID invalid");
-      return;
-    }
-    wledPostState({ ps: id });
-  });
+  $("btnGetInfo").addEventListener("click", doGetInfo);
+  $("btnToggle").addEventListener("click", doToggle);
+  $("btnCacheTest").addEventListener("click", doCacheTest);
+  $("btnForceUpdate").addEventListener("click", forceUpdateAndReload);
 
-  let briTimer = null;
-  bri.addEventListener("input", () => {
-    const v = parseInt(bri.value, 10);
-    if (briTimer) clearTimeout(briTimer);
-    briTimer = setTimeout(() => wledPostState({ bri: v }), 120);
-  });
+  $("hostInput").value = loadHost() || "seazencity.local";
+}
 
-  // Init
-  wledHost.value = localStorage.getItem(LS_HOST) || "192.168.4.1";
-  wledHost.addEventListener("change", () => localStorage.setItem(LS_HOST, wledHost.value));
-
-  updateModeUI();
-  setupSW();
-  updateCacheBadge();
-  setPill(wledStatus, "WLED: idle", null);
-  log("App loaded.");
+(function main(){
+  initMeta();
+  wire();
+  initSW();
 })();
