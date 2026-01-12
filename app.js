@@ -1,356 +1,330 @@
-// Seazencity PWA controller for WLED (default UI)
-// Принятая архитектура (AP -> WiFi Setup -> STA via mDNS -> fallback via AP reading STA IP)
-//
-// WiFi Setup URL: /settings/wifi (из sitemap WLED Web GUI) citeturn0search5
+(() => {
+  'use strict';
 
-const CFG = {
-  apOrigin: "http://4.3.2.1",
-  apWifiSetupUrl: "http://4.3.2.1/settings/wifi",
-  mdnsOrigin: "http://seazencity.local",
-  infoPath: "/json/info",
-  statePath: "/json/state",
+  const AP_BASE = 'http://4.3.2.1';
+  const MDNS_HOST = 'seazencity.local'; // WLED mDNS name from your setup
+  const LS_KEY_HOST = 'seazencity_host';
 
-  fetchTimeoutMs: 3500,
-  mdnsTryTotalMs: 12000,
-  mdnsTryIntervalMs: 1200,
-  apPollTotalMs: 30000,
-  apPollIntervalMs: 1200,
-  shortFailMessageMs: 1700,
-};
+  const $ = (id) => document.getElementById(id);
 
-const LS = {
-  baseOrigin: "seazencity_base_origin",
-  lastOkAt: "seazencity_last_ok_at",
-};
+  const state = {
+    lastUrl: '-',
+    host: localStorage.getItem(LS_KEY_HOST) || '', // will become either mdns or ip
+  };
 
-const UI = {
-  title: document.getElementById("title"),
-  text: document.getElementById("text"),
-  meta: document.getElementById("meta"),
-  actions: document.getElementById("actions"),
-  control: document.getElementById("control"),
-  btnToggle: document.getElementById("btnToggle"),
-  btnRefresh: document.getElementById("btnRefresh"),
-  ctlStatus: document.getElementById("ctlStatus"),
-  debug: document.getElementById("debug"),
-};
-
-function stamp() {
-  const d = new Date();
-  const pad = (n) => String(n).padStart(2, "0");
-  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
-}
-
-function log(msg) {
-  const line = `[${stamp()}] ${msg}`;
-  const cur = UI.debug.textContent || "";
-  UI.debug.textContent = line + "\n" + cur;
-}
-
-function escapeHtml(s) {
-  return String(s)
-    .replaceAll("&", "&amp;")
-    .replaceAll("<", "&lt;")
-    .replaceAll(">", "&gt;")
-    .replaceAll('"', "&quot;")
-    .replaceAll("'", "&#039;");
-}
-
-function setMetaChips(items) {
-  if (!items || items.length === 0) {
-    UI.meta.innerHTML = "";
-    return;
-  }
-  const chips = items.map((t) => `<span class="chip">${escapeHtml(t)}</span>`).join("");
-  UI.meta.innerHTML = `<div class="chips">${chips}</div>`;
-}
-
-function setActions(actions) {
-  UI.actions.innerHTML = "";
-  for (const a of actions) {
-    const el = a.href ? document.createElement("a") : document.createElement("button");
-    el.className = "btn" + (a.primary ? " primary" : "");
-    el.textContent = a.label;
-
-    if (a.href) {
-      el.href = a.href;
-      el.rel = "noopener";
-      el.target = "_self";
-    } else {
-      el.onclick = a.onClick;
-      if (a.disabled) el.disabled = true;
-    }
-
-    UI.actions.appendChild(el);
-  }
-}
-
-function setScreen({ title, text, chips = [], actions = [], showControl = false }) {
-  UI.title.textContent = title;
-  UI.text.textContent = text;
-  setMetaChips(chips);
-  setActions(actions);
-  UI.control.style.display = showControl ? "block" : "none";
-}
-
-function saveBaseOrigin(origin) {
-  localStorage.setItem(LS.baseOrigin, origin);
-  localStorage.setItem(LS.lastOkAt, String(Date.now()));
-}
-
-function loadBaseOrigin() {
-  return localStorage.getItem(LS.baseOrigin) || "";
-}
-
-function wifiSettingsIntent() {
-  try {
-    window.location.href = "intent:#Intent;action=android.settings.WIFI_SETTINGS;end";
-  } catch {
-    log("Не удалось открыть настройки Wi-Fi через intent.");
-  }
-}
-
-function openSameTab(url) {
-  window.location.href = url;
-}
-
-async function fetchWithTimeout(url, opts = {}, timeoutMs = CFG.fetchTimeoutMs) {
-  const ctrl = new AbortController();
-  const t = setTimeout(() => ctrl.abort(), timeoutMs);
-  try {
-    return await fetch(url, { ...opts, signal: ctrl.signal, cache: "no-store" });
-  } finally {
-    clearTimeout(t);
-  }
-}
-
-async function getJson(origin, path, timeoutMs = CFG.fetchTimeoutMs) {
-  const url = origin + path;
-  const res = await fetchWithTimeout(url, { method: "GET" }, timeoutMs);
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-  return await res.json();
-}
-
-async function postJson(origin, path, bodyObj, timeoutMs = CFG.fetchTimeoutMs) {
-  const url = origin + path;
-  const res = await fetchWithTimeout(
-    url,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify(bodyObj),
-    },
-    timeoutMs
-  );
-  if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-  return await res.json();
-}
-
-async function tryReadState(origin) {
-  return await getJson(origin, CFG.statePath, 3000);
-}
-
-async function tryToggle(origin, on) {
-  return await postJson(origin, CFG.statePath, { on }, 3500);
-}
-
-async function tryMdnsUntilOk() {
-  const start = Date.now();
-  while (Date.now() - start < CFG.mdnsTryTotalMs) {
-    try {
-      log("Пробуем продолжить автоматически (mDNS)…");
-      const info = await getJson(CFG.mdnsOrigin, CFG.infoPath, 3000);
-      log(`mDNS OK. info.ip="${(info && info.ip) ? info.ip : ""}"`);
-      saveBaseOrigin(CFG.mdnsOrigin);
-      return true;
-    } catch (e) {
-      log(`mDNS нет: ${String(e.message || e)}`);
-      await new Promise((r) => setTimeout(r, CFG.mdnsTryIntervalMs));
-    }
-  }
-  return false;
-}
-
-async function readStaIpFromApPoll() {
-  const start = Date.now();
-  while (Date.now() - start < CFG.apPollTotalMs) {
-    try {
-      const info = await getJson(CFG.apOrigin, CFG.infoPath, 2500);
-      const ip = (info && typeof info.ip === "string") ? info.ip.trim() : "";
-      log(`AP /json/info ip="${ip}"`);
-      if (ip) return ip;
-    } catch (e) {
-      log(`AP /json/info недоступен: ${String(e.message || e)}`);
-    }
-    await new Promise((r) => setTimeout(r, CFG.apPollIntervalMs));
-  }
-  return "";
-}
-
-async function screenStart() {
-  setScreen({
-    title: "Подключение лампы",
-    text: "Чтобы начать, подключитесь к сети seazencity.",
-    chips: ["Сеть: seazencity", "Пароль: не требуется"],
-    actions: [
-      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
-      { label: "Я подключился", primary: true, onClick: screenOpenWifiSetup },
-    ],
-  });
-}
-
-async function screenOpenWifiSetup() {
-  setScreen({
-    title: "Настройка подключения",
-    text: "Откроем настройку подключения.",
-    actions: [
-      { label: "Продолжить", primary: true, onClick: () => openSameTab(CFG.apWifiSetupUrl) },
-      { label: "Назад", onClick: screenReturnHome },
-    ],
-  });
-}
-
-async function screenReturnHome() {
-  setScreen({
-    title: "Подключаемся",
-    text: "Переключитесь обратно на свою сеть Wi-Fi и вернитесь в приложение.",
-    actions: [
-      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
-      { label: "Я вернулся", primary: true, onClick: screenDiscover },
-    ],
-  });
-}
-
-async function screenDiscover() {
-  setScreen({
-    title: "Подключаемся",
-    text: "Продолжаем автоматически.",
-    actions: [],
-  });
-
-  const saved = loadBaseOrigin();
-  if (saved) {
-    try {
-      log(`Пробуем сохранённый адрес: ${saved}`);
-      const st = await tryReadState(saved);
-      log(`Сохранённый адрес OK. on=${!!st.on}`);
-      return screenControl(saved);
-    } catch (e) {
-      log(`Сохранённый адрес не отвечает: ${String(e.message || e)}`);
-    }
+  function setText(id, text) {
+    const el = $(id);
+    if (el) el.textContent = String(text);
   }
 
-  const ok = await tryMdnsUntilOk();
-  if (ok) return screenControl(CFG.mdnsOrigin);
+  function now() {
+    return new Date().toISOString().replace('T',' ').replace('Z','');
+  }
 
-  return screenNeedApFallback();
-}
+  function log(line) {
+    const el = $('diag');
+    const prev = el.textContent === '-' ? '' : el.textContent + '\n';
+    el.textContent = prev + `[${now()}] ${line}`;
+  }
 
-async function screenNeedApFallback() {
-  setScreen({
-    title: "Продолжим",
-    text: "Подключитесь к сети seazencity и нажмите Продолжить.",
-    chips: ["Сеть: seazencity", "Пароль: не требуется"],
-    actions: [
-      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
-      { label: "Продолжить", primary: true, onClick: screenReadIpFromAp },
-    ],
-  });
-}
+  function setResult(label) {
+    setText('result', label);
+  }
 
-async function screenReadIpFromAp() {
-  setScreen({
-    title: "Подключаемся",
-    text: "Продолжаем автоматически.",
-    actions: [],
-  });
+  function setLast(url) {
+    state.lastUrl = url;
+    setText('lastUrl', url);
+  }
 
-  const ip = await readStaIpFromApPoll();
+  function showIpBlock(show) {
+    $('ipBlock').style.display = show ? '' : 'none';
+  }
 
-  if (!ip) {
-    setScreen({
-      title: "Подключаемся",
-      text: "Проверьте сеть и пароль и попробуйте ещё раз.",
-      actions: [],
+  function normalizeHost(input) {
+    const s = (input || '').trim();
+    if (!s) return '';
+    return s.replace(/^https?:\/\//i, '').replace(/\/+$/,'');
+  }
+
+  function isLikelyIPv4(s) {
+    const m = String(s || '').match(/\b(\d{1,3}\.){3}\d{1,3}\b/);
+    if (!m) return false;
+    return m[0].split('.').every(x => {
+      const n = Number(x);
+      return Number.isFinite(n) && n >= 0 && n <= 255;
     });
-    log("STA IP не появился. Открываем WiFi Setup снова.");
-    setTimeout(() => openSameTab(CFG.apWifiSetupUrl), CFG.shortFailMessageMs);
-    return;
   }
 
-  const ipOrigin = `http://${ip}`;
-  log(`Получили STA IP из AP: ${ipOrigin}`);
-  saveBaseOrigin(ipOrigin);
+  function pickAnyIp(obj) {
+    // Heuristic: scan values for IPv4 strings and prefer private ranges.
+    // If nothing found - return ''.
+    const ips = [];
+    const walk = (v) => {
+      if (!v) return;
+      if (typeof v === 'string') {
+        const m = v.match(/\b(\d{1,3}\.){3}\d{1,3}\b/);
+        if (m && isLikelyIPv4(m[0])) ips.push(m[0]);
+        return;
+      }
+      if (typeof v !== 'object') return;
+      if (Array.isArray(v)) { v.forEach(walk); return; }
+      for (const k of Object.keys(v)) walk(v[k]);
+    };
+    walk(obj);
 
-  setScreen({
-    title: "Подключаемся",
-    text: "Переключитесь обратно на свою сеть Wi-Fi и вернитесь в приложение.",
-    actions: [
-      { label: "Открыть настройки Wi-Fi", onClick: wifiSettingsIntent },
-      { label: "Я вернулся", primary: true, onClick: () => screenControl(ipOrigin) },
-    ],
-  });
-}
-
-async function screenControl(origin) {
-  setScreen({
-    title: "Лампа готова",
-    text: "Управление доступно.",
-    actions: [],
-    showControl: true,
-  });
-
-  UI.btnRefresh.onclick = async () => refreshControl(origin);
-  UI.btnToggle.onclick = async () => toggleControl(origin);
-
-  await refreshControl(origin);
-}
-
-async function refreshControl(origin) {
-  UI.ctlStatus.textContent = "обновление…";
-  try {
-    const st = await tryReadState(origin);
-    const on = !!st.on;
-    UI.btnToggle.textContent = on ? "Выключить" : "Включить";
-    UI.ctlStatus.textContent = on ? "включено" : "выключено";
-    localStorage.setItem(LS.lastOkAt, String(Date.now()));
-    log(`STATE OK (${origin}) on=${on}`);
-  } catch (e) {
-    UI.ctlStatus.textContent = "нет связи";
-    log(`STATE fail (${origin}): ${String(e.message || e)}`);
-    setTimeout(() => screenDiscover(), 600);
+    const uniq = Array.from(new Set(ips));
+    const score = (ip) => {
+      if (ip.startsWith('10.')) return 4;
+      if (ip.startsWith('192.168.')) return 3;
+      if (ip.startsWith('172.')) return 2;
+      if (ip === '4.3.2.1' || ip === '192.168.4.1') return 0; // AP IP, not STA
+      return 1;
+    };
+    uniq.sort((a,b) => score(b)-score(a));
+    return uniq[0] || '';
   }
-}
 
-async function toggleControl(origin) {
-  UI.ctlStatus.textContent = "отправка…";
-  try {
-    const cur = await tryReadState(origin);
-    const next = !cur.on;
-    const st = await tryToggle(origin, next);
-    const on = !!st.on;
-    UI.btnToggle.textContent = on ? "Выключить" : "Включить";
-    UI.ctlStatus.textContent = on ? "включено" : "выключено";
-    localStorage.setItem(LS.lastOkAt, String(Date.now()));
-    log(`TOGGLE OK (${origin}) on=${on}`);
-  } catch (e) {
-    UI.ctlStatus.textContent = "не удалось";
-    log(`TOGGLE fail (${origin}): ${String(e.message || e)}`);
+  async function fetchJson(url, opts = {}) {
+    const timeoutMs = opts.timeoutMs ?? 5000;
+
+    const controller = new AbortController();
+    const t = setTimeout(() => controller.abort(new Error('timeout')), timeoutMs);
+
+    try {
+      setLast(url);
+      const res = await fetch(url, {
+        method: opts.method || 'GET',
+        headers: Object.assign({ 'Content-Type': 'application/json' }, opts.headers || {}),
+        body: opts.body ? JSON.stringify(opts.body) : undefined,
+        signal: controller.signal,
+        cache: 'no-store',
+      });
+
+      const text = await res.text();
+      let json = null;
+      try { json = JSON.parse(text); } catch (_) {}
+
+      return {
+        ok: res.ok,
+        status: res.status,
+        statusText: res.statusText,
+        text,
+        json,
+        headers: {
+          'content-type': res.headers.get('content-type') || '',
+          'content-length': res.headers.get('content-length') || '',
+        },
+      };
+    } finally {
+      clearTimeout(t);
+    }
   }
-}
 
-async function registerSW() {
-  if (!("serviceWorker" in navigator)) return;
-  try {
-    await navigator.serviceWorker.register("./sw.js", { scope: "./" });
-    log("Service Worker: OK");
-  } catch (e) {
-    log(`Service Worker: fail ${String(e.message || e)}`);
+  async function checkAp() {
+    setResult('checking AP...');
+    log(`AP check -> ${AP_BASE}/json/info`);
+    try {
+      const r = await fetchJson(`${AP_BASE}/json/info`, { timeoutMs: 4500 });
+      setResult(`HTTP ${r.status}`);
+      log(`AP ответ: status=${r.status} ok=${r.ok} ct=${r.headers['content-type']}`);
+      if (r.ok) {
+        setText('headline', 'Лампа в режиме настройки (AP)');
+        setText('subline', 'Открой Wi‑Fi настройки лампы, введи сеть и пароль, нажми Save & Connect. Затем вернись в это приложение.');
+        showIpBlock(false);
+      } else {
+        setText('headline', 'Лампа не отвечает в AP');
+        setText('subline', 'Проверь, что телефон подключён к Wi‑Fi лампы (seazencity), затем нажми «Проверить доступность» снова.');
+        showIpBlock(false);
+      }
+      return r;
+    } catch (e) {
+      setResult(`ERROR`);
+      setText('headline', 'Лампа недоступна');
+      setText('subline', 'Проверь, что телефон подключён к Wi‑Fi лампы (seazencity). Затем нажми «Проверить доступность».');
+      log(`AP ошибка: ${String(e && e.message ? e.message : e)}`);
+      showIpBlock(false);
+      return null;
+    }
   }
-}
 
-window.addEventListener("load", async () => {
-  UI.debug.textContent = "";
-  await registerSW();
-  await screenStart();
-});
+  async function tryMdns() {
+    setResult('checking mDNS...');
+    const url = `http://${MDNS_HOST}/json/info`;
+    log(`mDNS check -> ${url}`);
+    try {
+      const r = await fetchJson(url, { timeoutMs: 4500 });
+      setResult(`HTTP ${r.status}`);
+      if (r.ok) {
+        state.host = MDNS_HOST;
+        localStorage.setItem(LS_KEY_HOST, state.host);
+        setText('headline', 'Лампа найдена в Wi‑Fi');
+        setText('subline', `Адрес: ${MDNS_HOST}. Можно управлять.`);
+        showIpBlock(false);
+        log('mDNS OK. Управление доступно.');
+      } else {
+        setText('headline', 'Лампа не найдена по имени');
+        setText('subline', 'Если лампа уже подключилась к Wi‑Fi, можно попробовать получить её адрес из AP или ввести IP.');
+        showIpBlock(true);
+        log(`mDNS ответ: status=${r.status} ok=${r.ok}`);
+      }
+      return r;
+    } catch (e) {
+      setResult('ERROR');
+      setText('headline', 'Не получилось найти лампу по имени');
+      setText('subline', 'Это бывает, если mDNS не работает в сети. Тогда используем IP.');
+      showIpBlock(true);
+      log(`mDNS ошибка: ${String(e && e.message ? e.message : e)}`);
+      return null;
+    }
+  }
+
+  async function tryAutoIpFromAp() {
+    $('ipHint').textContent = 'Пробую получить IP из лампы (в режиме AP)...';
+    const r = await checkAp();
+    if (!r || !r.ok || !r.json) {
+      $('ipHint').textContent = 'AP недоступен или не вернул JSON.';
+      return;
+    }
+    const ip = pickAnyIp(r.json);
+    if (!ip) {
+      $('ipHint').textContent = 'IP в ответе не найден. Введи IP вручную.';
+      return;
+    }
+    $('ipInput').value = ip;
+    $('ipHint').textContent = `Нашёл IP: ${ip}. Нажми «Продолжить по IP».`;
+  }
+
+  function currentHostBase() {
+    const h = normalizeHost(state.host || $('ipInput').value || '');
+    return h ? `http://${h}` : '';
+  }
+
+  async function wledGet(path) {
+    const base = currentHostBase();
+    if (!base) throw new Error('host_missing');
+    const url = `${base}${path}`;
+    log(`GET ${url}`);
+    const r = await fetchJson(url, { timeoutMs: 4500 });
+    log(`-> ${r.status} ok=${r.ok}`);
+    return r;
+  }
+
+  async function wledPostState(body) {
+    const base = currentHostBase();
+    if (!base) throw new Error('host_missing');
+    const url = `${base}/json/state`;
+    log(`POST ${url} body=${JSON.stringify(body)}`);
+    const r = await fetchJson(url, { method: 'POST', body, timeoutMs: 4500 });
+    log(`-> ${r.status} ok=${r.ok} resp=${r.text.slice(0,120)}`);
+    return r;
+  }
+
+  function setHostFromInput() {
+    const ip = normalizeHost($('ipInput').value);
+    if (!ip) {
+      $('ipHint').textContent = 'Поле IP пустое.';
+      return false;
+    }
+    state.host = ip;
+    localStorage.setItem(LS_KEY_HOST, state.host);
+    $('ipHint').textContent = `Использую: ${ip}`;
+    return true;
+  }
+
+  function wireUi() {
+    $('btnCheck').addEventListener('click', () => checkAp());
+
+    // Link opens WLED page (top-level navigation) - no fetch.
+    $('btnOpenWifi').addEventListener('click', () => {
+      log('Открываю страницу Wi‑Fi настроек лампы (AP).');
+    });
+
+    $('btnFind').addEventListener('click', () => tryMdns());
+
+    $('btnAutoIp').addEventListener('click', () => tryAutoIpFromAp());
+
+    $('btnUseIp').addEventListener('click', async () => {
+      if (!setHostFromInput()) return;
+      setResult('checking IP...');
+      try {
+        const r = await wledGet('/json/info');
+        setResult(`HTTP ${r.status}`);
+        if (r.ok) {
+          setText('headline', 'Лампа найдена по IP');
+          setText('subline', `Адрес: ${state.host}. Можно управлять.`);
+          showIpBlock(false);
+        } else {
+          $('ipHint').textContent = `Ответ ${r.status}.`;
+        }
+      } catch (e) {
+        setResult('ERROR');
+        $('ipHint').textContent = `Ошибка: ${String(e && e.message ? e.message : e)}`;
+      }
+    });
+
+    $('btnOn').addEventListener('click', async () => {
+      try { await wledPostState({ on: true }); } catch (e) { log(`CTRL ошибка: ${e}`); }
+    });
+    $('btnOff').addEventListener('click', async () => {
+      try { await wledPostState({ on: false }); } catch (e) { log(`CTRL ошибка: ${e}`); }
+    });
+    $('btnToggle').addEventListener('click', async () => {
+      try { await wledPostState({ on: 't' }); } catch (e) { log(`CTRL ошибка: ${e}`); }
+    });
+    $('btnBri').addEventListener('click', async () => {
+      const v = Number($('bri').value);
+      const bri = Number.isFinite(v) ? Math.max(0, Math.min(255, v)) : 128;
+      try { await wledPostState({ bri }); } catch (e) { log(`CTRL ошибка: ${e}`); }
+    });
+
+    window.addEventListener('error', (ev) => {
+      log(`JS error: ${ev.message} @ ${ev.filename}:${ev.lineno}:${ev.colno}`);
+    });
+    window.addEventListener('unhandledrejection', (ev) => {
+      log(`Promise rejection: ${String(ev.reason)}`);
+    });
+  }
+
+  async function init() {
+    setText('origin', location.origin);
+    setText('proto', location.protocol);
+    setText('sw', navigator.serviceWorker?.controller ? 'active' : 'not active');
+
+    setText('headline', 'Загрузка...');
+    setText('subline', 'Нажми «Проверить доступность» чтобы начать с AP.');
+
+    // If we already have a host saved (mDNS or IP), show it and try a quick /json/info only on user request.
+    if (state.host) {
+      log(`Сохранён адрес: ${state.host}`);
+      // show only hint; do not auto-fetch to avoid permission prompts without user gesture.
+    }
+
+    // Minimal automatic: try to detect AP quickly, but with short timeout and full error display.
+    try {
+      setResult('auto-check...');
+      const r = await fetchJson(`${AP_BASE}/json/info`, { timeoutMs: 1200 });
+      if (r.ok) {
+        setResult(`HTTP ${r.status}`);
+        setText('headline', 'Лампа в режиме настройки (AP)');
+        setText('subline', 'Открой Wi‑Fi настройки лампы, введи сеть и пароль, нажми Save & Connect. Затем вернись в это приложение.');
+        log('AP доступен (авто-проверка).');
+      } else {
+        setResult('idle');
+      }
+    } catch (_) {
+      setResult('idle');
+    }
+  }
+
+  wireUi();
+  init();
+
+  // Register service worker (cache only our own files)
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('./sw.js').then(() => {
+      log('SW зарегистрирован.');
+    }).catch((e) => {
+      log(`SW ошибка: ${String(e && e.message ? e.message : e)}`);
+    });
+  }
+})();

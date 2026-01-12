@@ -2,43 +2,74 @@
 <html lang="ru">
 <head>
   <meta charset="utf-8" />
-  <meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
   <meta name="theme-color" content="#0b0f14" />
-  <title>Seazencity Lamp</title>
-
+  <title>Seazencity - настройка и контроль</title>
   <link rel="manifest" href="./manifest.webmanifest" />
   <link rel="icon" href="./icon-192.png" />
-  <link rel="apple-touch-icon" href="./icon-192.png" />
   <link rel="stylesheet" href="./styles.css" />
 </head>
-
 <body>
   <div class="wrap">
-    <div class="grid">
-      <section class="card">
-        <h1 id="title">Загрузка…</h1>
-        <p id="text" class="muted">Если видишь этот текст дольше пары секунд - обнови страницу.</p>
+    <h1>Seazencity</h1>
+    <p class="muted">Подключение к лампе: AP -> Wi‑Fi -> управление</p>
 
-        <div id="meta"></div>
-        <div class="row" id="actions"></div>
+    <div class="card">
+      <div class="chips">
+        <div class="chip wide"><span class="mono">Origin:</span> <span id="origin">-</span></div>
+        <div class="chip"><span class="mono">Protocol:</span> <span id="proto">-</span></div>
+        <div class="chip"><span class="mono">SW:</span> <span id="sw">-</span></div>
+      </div>
 
-        <div id="control" style="display:none; margin-top:12px">
-          <div class="row">
-            <button id="btnToggle" class="btn primary">Включить</button>
-            <button id="btnRefresh" class="btn">Обновить</button>
-          </div>
-          <p class="small muted" style="margin-top:10px">
-            Статус: <span id="ctlStatus" class="mono">—</span>
-          </p>
+      <h2 style="margin-top:12px">Экран 1 - первое подключение</h2>
+      <p class="big" id="headline">Загрузка...</p>
+      <p class="small muted" id="subline">Если этот экран не меняется - нажми «Проверить доступность» ниже.</p>
+
+      <div class="row">
+        <button class="btn primary" id="btnCheck">Проверить доступность</button>
+        <a class="btn" id="btnOpenWifi" href="http://4.3.2.1/settings/wifi">Открыть Wi‑Fi настройки лампы</a>
+        <button class="btn" id="btnFind">Найти лампу в Wi‑Fi (mDNS)</button>
+      </div>
+
+      <div class="status">
+        <div class="chip wide"><span class="mono">Last URL:</span> <span id="lastUrl">-</span></div>
+        <div class="chip wide"><span class="mono">RESULT:</span> <span id="result">idle</span></div>
+      </div>
+
+      <details id="ipBlock" style="display:none">
+        <summary>Если mDNS не сработал - использовать адрес</summary>
+        <div class="field">
+          <label>Адрес лампы (IP)</label>
+          <input id="ipInput" inputmode="decimal" placeholder="например 192.168.1.73" />
         </div>
-      </section>
-
-      <section class="card">
-        <h2>Диагностика</h2>
-        <div class="diag">
-          <div id="debug" class="pre muted">—</div>
+        <div class="row">
+          <button class="btn primary" id="btnUseIp">Продолжить по IP</button>
+          <button class="btn" id="btnAutoIp">Попробовать взять IP из лампы (AP)</button>
         </div>
-      </section>
+        <p class="small muted" id="ipHint"></p>
+      </details>
+
+      <h3>Диагностика</h3>
+      <div class="diag">
+        <div class="pre" id="diag">-</div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:14px">
+      <h2>Управление (работает только когда лампа доступна)</h2>
+      <div class="row">
+        <button class="btn" id="btnOn">Включить</button>
+        <button class="btn danger" id="btnOff">Выключить</button>
+        <button class="btn" id="btnToggle">Toggle</button>
+      </div>
+      <div class="field">
+        <label>Яркость (0-255)</label>
+        <input id="bri" type="number" min="0" max="255" value="128" />
+      </div>
+      <div class="row">
+        <button class="btn" id="btnBri">Отправить яркость</button>
+      </div>
+      <p class="small muted" id="ctrlHint">Подсказка: сначала пройди через AP и подключение к Wi‑Fi.</p>
     </div>
   </div>
 
